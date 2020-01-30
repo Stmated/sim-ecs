@@ -113,25 +113,26 @@ export class World implements IWorld {
             state = this.defaultState;
         }
 
+        await this.changeRunningState(state);
+
         if (this.lastDispatch === 0) {
             this.lastDispatch = currentTime;
         }
 
         {
-            let stateSystem;
+            const scheduledSystems = this.getScheduledRunSystems();
+            let deltaTime = currentTime - this.lastDispatch;
             let parallelRunningSystems = [];
-            for (let system of this.sortedSystems) {
-                stateSystem = state.systems.find(stateSys => stateSys.constructor.name === system.system.constructor.name);
-                if (stateSystem) {
-                    if (system.dependencies.length > 0) {
-                        await Promise.all(parallelRunningSystems);
-                        parallelRunningSystems = [];
-                        await system.system.update(this.systemWorld, system.system.entities, currentTime - this.lastDispatch);
-                    }
-                    else {
-                        parallelRunningSystems.push(system.system.update(this.systemWorld, system.system.entities, currentTime - this.lastDispatch))
-                    }
+            let parallelSystem;
+            let systems;
+
+            for (systems of scheduledSystems) {
+                for (parallelSystem of systems) {
+                    parallelRunningSystems.push(parallelSystem.update(this.systemWorld, parallelSystem.entities, deltaTime));
                 }
+
+                await Promise.all(parallelRunningSystems);
+                parallelRunningSystems = [];
             }
         }
 
@@ -298,10 +299,12 @@ export class World implements IWorld {
             const execAsync = typeof requestAnimationFrame == 'function'
                 ? requestAnimationFrame
                 : setTimeout;
+            const scheduledSystems = this.getScheduledRunSystems();
             let currentTime;
             let deltaTime;
             let parallelRunningSystems: Promise<void>[] = [];
-            let system;
+            let parallelSystem;
+            let systems;
             const mainLoop = async () => {
                 currentTime = Date.now();
                 deltaTime = currentTime - this.lastDispatch;
@@ -318,15 +321,13 @@ export class World implements IWorld {
                     await configuration.preFrameHandler();
                 }
 
-                for (system of this.runSystems) {
-                    if (system.hasDependencies) {
-                        await Promise.all(parallelRunningSystems);
-                        parallelRunningSystems = [];
-                        await system.system.update(this.systemWorld, system.system.entities, deltaTime);
+                for (systems of scheduledSystems) {
+                    for (parallelSystem of systems) {
+                        parallelRunningSystems.push(parallelSystem.update(this.systemWorld, parallelSystem.entities, deltaTime));
                     }
-                    else {
-                        parallelRunningSystems.push(system.system.update(this.systemWorld, system.system.entities, deltaTime))
-                    }
+
+                    await Promise.all(parallelRunningSystems);
+                    parallelRunningSystems = [];
                 }
 
                 await Promise.all(parallelRunningSystems);
@@ -339,5 +340,43 @@ export class World implements IWorld {
         }
 
         return this.runPromise;
+    }
+
+    protected getScheduledRunSystems(): ISystem[][] {
+        const compScheduler: ISystem[][] = [];
+        const depScheduler: ISystem[][] = [[]];
+
+        {
+            let step = 0;
+            let system;
+
+            for (system of this.runSystems) {
+                if (system.hasDependencies) {
+                    if (depScheduler[step].length > 0) {
+                        depScheduler[++step] = [];
+                    }
+
+                    depScheduler[step].push(system.system);
+                    depScheduler[++step] = [];
+                } else {
+                    // only systems which read the same components may be put together
+                    depScheduler[step].push(system.system);
+                }
+            }
+        }
+
+        {
+            let group;
+
+            for (group of depScheduler) {
+                // check query of each system and sort early-push all concurrent WRITEs
+                // 1. create Map<Component, [[System, Access]]>
+                // 2. put systems with write access into separate arrays.
+                //    try to put systems together, if they write to different components
+                //    also keep a second array, which stores the WRITE-components
+            }
+        }
+
+        return compScheduler;
     }
 }

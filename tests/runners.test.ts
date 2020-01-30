@@ -118,29 +118,29 @@ describe('Run Systems', () => {
         assert.equal(world.systems.length, 1, 'System was not registered');
     });
 
-    it('dispatch', () => {
+    it('dispatch', async () => {
         const entity = world.buildEntity().with(Components.C1).build();
         const c1 = entity.getComponent(Components.C1);
 
         world.registerSystem(new Systems.S1(op));
-        world.dispatch();
+        await world.dispatch();
 
         assert(c1, 'Could not fetch component'); if (!c1) return;
         assert.equal(c1.a, 1, 'System did not operate on component');
     });
 
-    it('quick+dispatch', () => {
+    it('quick+dispatch', async () => {
         const entity = world.buildEntity().withQuick(Components.C1).build();
         const c1 = entity.getComponent(Components.C1);
 
         world.registerSystemQuick(new Systems.S1(op));
-        world.dispatch();
+        await world.dispatch();
 
         assert(c1, 'Could not fetch component'); if (!c1) return;
         assert.equal(c1.a, 0, 'Component was added to systems pre-maturely');
 
         world.maintain();
-        world.dispatch();
+        await world.dispatch();
 
         assert(c1, 'Could not fetch component'); if (!c1) return;
         assert.equal(c1.a, 1, 'System did not operate on component');
