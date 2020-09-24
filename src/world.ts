@@ -13,12 +13,13 @@ import {
 } from "./world.spec";
 import IEntity from "./entity.spec";
 import IEntityBuilder from "./entity-builder.spec";
-import ISystem, {access, EAccess, TComponentAccess, TSystemData, TSystemProto} from "./system.spec";
+import ISystem, {TSystemData, TSystemProto} from "./system.spec";
 import {IState, State} from "./state";
 import {TTypeProto} from "./_.spec";
 import {PushDownAutomaton} from "./pda";
 import {SaveFormat} from "./save-format";
-import {TDeserializer} from "./save-format.spec";
+import {ISaveFormat, TSerializer} from "./save-format.spec";
+import {access, EAccess, TComponentAccess} from "./queue.spec";
 
 export * from './world.spec';
 
@@ -31,23 +32,12 @@ export class World implements IWorld {
     protected runExecutionPipeline: Set<TSystemInfo<TSystemData>>[] = [];
     protected runExecutionPipelineCache: Map<IState, Set<TSystemInfo<TSystemData>>[]> = new Map();
     protected runPromise?: Promise<void> = undefined;
+    protected saveFormat?: ISaveFormat;
     protected shouldRunSystems = false;
     protected sortedSystems: TSystemInfo<TSystemData>[];
     protected systemInfos: Map<ISystem<TSystemData>, TSystemInfo<TSystemData>>;
     protected systemWorld: ISystemActions;
     protected transitionWorld: ITransitionActions;
-
-    static fromJSON(json: string, deserializer: TDeserializer): World {
-        const save = SaveFormat.fromJSON(json);
-        const newWorld = new World(new Map());
-        let entity;
-
-        for (entity of save.getEntities(deserializer)) {
-            newWorld.addEntity(entity);
-        }
-
-        return newWorld;
-    }
 
     constructor(systemInfos: Map<ISystem<TSystemData>, TSystemInfo<TSystemData>>) {
         const self = this;
@@ -223,15 +213,10 @@ export class World implements IWorld {
         const resultEntities = new Set<IEntity>();
         let entityInfo;
 
-        entityLoop: for (entityInfo of this.entityInfos.values()) {
-            for (let componentRequirement of query) {
-                if (
-                    (componentRequirement[access].type == EAccess.SET && !entityInfo.entity.hasComponent(componentRequirement[access].component)) ||
-                    (componentRequirement[access].type == EAccess.UNSET && entityInfo.entity.hasComponent(componentRequirement[access].component))
-                ) continue entityLoop;
+        for (entityInfo of this.entityInfos.values()) {
+            if (entityInfo.entity.matchesQueue(query)) {
+                resultEntities.add(entityInfo.entity);
             }
-
-            resultEntities.add(entityInfo.entity);
         }
 
         return resultEntities.values();
@@ -444,6 +429,10 @@ export class World implements IWorld {
         return this.runPromise;
     }
 
+    setSaveFormat(saveFormat: ISaveFormat) {
+        this.saveFormat = saveFormat;
+    }
+
     protected sortSystems(unsorted: TSystemNode[]): TSystemNode[] {
         const graph = new Map(unsorted.map(node => [node.system.constructor as TSystemProto<TSystemData>, Array.from(node.dependencies)]));
         let edges: TSystemProto<TSystemData>[];
@@ -495,10 +484,18 @@ export class World implements IWorld {
         this.shouldRunSystems = false;
     }
 
-    toJSON(): string {
-        const save = new SaveFormat({
-            entities: this.entityInfos.keys(),
-        });
+    toJSON(serializer?: TSerializer): string {
+        let save;
+
+        if (this.saveFormat) {
+            save = this.saveFormat;
+            save.setEntities(this.entityInfos.keys());
+        }
+        else {
+            save = new SaveFormat({
+                entities: this.entityInfos.keys(),
+            });
+        }
 
         return save.toJSON();
     }
